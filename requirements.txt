@@ -1,0 +1,12 @@
+requests
+python-dotenv
+pytest
+psycopg2-binary
+APScheduler==3.10.4
+pandas
+scipy
+matplotlib
+notebook
+sqlalchemy
+streamlit>=1.32.0
+plotly>=5.20.0

@@ -1,0 +1,12 @@
+.env
+data/raw/
+__pycache__/
+*.pyc
+.DS_Store
+logs/*.log
+.claude/
+notebooks/.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+instructions.txt
