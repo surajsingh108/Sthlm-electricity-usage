@@ -26,7 +26,7 @@ from pipeline.db import get_conn
 # ---------------------------------------------------------------------------
 
 def _read_sql(query: str, params: tuple = ()) -> pd.DataFrame:
-    """Open a connection, run query, close connection, return DataFrame."""
+    """Open a psycopg2 connection, run query, close it, return DataFrame."""
     conn = get_conn()
     try:
         return pd.read_sql(query, conn, params=params)
@@ -56,11 +56,20 @@ def get_latest_signal(zone: str) -> dict:
         Values default to sensible fallbacks when no data is present.
     """
     sql = """
-        SELECT hour, price_eur_mwh, price_level, greenness_score,
-               appliance_signal, windspeed_ms
-        FROM features_hourly
-        WHERE zone = %s
-        ORDER BY hour DESC
+        SELECT
+            fh.hour, fh.price_eur_mwh, fh.price_level,
+            COALESCE(fh.greenness_score, (
+                SELECT greenness_score FROM features_hourly
+                WHERE zone = fh.zone
+                  AND greenness_score IS NOT NULL
+                  AND hour <= NOW()
+                ORDER BY hour DESC LIMIT 1
+            )) AS greenness_score,
+            fh.appliance_signal, fh.windspeed_ms
+        FROM features_hourly fh
+        WHERE fh.zone = %s
+          AND fh.hour <= NOW()
+        ORDER BY fh.hour DESC
         LIMIT 1
     """
     df = _read_sql(sql, (zone,))
@@ -106,8 +115,9 @@ def get_price_history(zone: str, hours: int = 48) -> pd.DataFrame:
         SELECT hour, price_eur_mwh, rolling_avg_6h, rolling_avg_24h
         FROM features_hourly
         WHERE zone = %s
-        ORDER BY hour DESC
-        LIMIT %s
+          AND hour >= NOW() - (%s * INTERVAL '1 hour')
+          AND hour <= NOW()
+        ORDER BY hour ASC
     """
     df = _read_sql(sql, (zone, hours))
     if df.empty:
@@ -137,8 +147,9 @@ def get_greenness_history(hours: int = 48) -> pd.DataFrame:
         FROM features_hourly
         WHERE zone = 'SE3'
           AND greenness_score IS NOT NULL
-        ORDER BY hour DESC
-        LIMIT %s
+          AND hour >= NOW() - (%s * INTERVAL '1 hour')
+          AND hour <= NOW()
+        ORDER BY hour ASC
     """
     df = _read_sql(sql, (hours,))
     if df.empty:

@@ -8,8 +8,9 @@ features into three tables:
   features_correlation — Pearson r for key metric pairs per zone
   features_best_hours  — best hours-of-day to run appliances per zone
 
-All rolling calculations are done in pandas (not SQL). Upserts use a
-write-to-temp-table + INSERT … ON CONFLICT pattern so re-runs are idempotent.
+All rolling calculations are done in pandas (not SQL). Reads use a SQLAlchemy
+engine (required by pandas). Upserts use psycopg2 execute_values — same
+pattern as the rest of the pipeline.
 
 Generation data (greenness, wind_mw, hydro_mw, nuclear_mw, solar_mw) is
 available for SE3 only — those columns are NULL for SE1/SE2/SE4.
@@ -226,15 +227,24 @@ def compute_rolling_averages(zone: str, conn) -> pd.DataFrame:
 
 def _upsert_features_hourly(rows: list[dict], conn) -> int:
     """
-    Upsert a list of feature-row dicts into features_hourly.
+    Upsert a list of feature-row dicts into features_hourly via execute_values.
 
     Each dict must include all column keys. Returns number of rows upserted.
     """
     if not rows:
         return 0
 
-    df = pd.DataFrame(rows)
-    df.to_sql("_tmp_features_hourly", conn, if_exists="replace", index=False, method="multi")
+    from psycopg2.extras import execute_values
+
+    _COLS = (
+        "hour", "zone", "price_eur_mwh",
+        "rolling_avg_6h", "rolling_avg_24h", "price_level",
+        "temperature_c", "windspeed_ms", "radiation_wm2",
+        "greenness_score", "low_carbon_mw", "total_gen_mw",
+        "wind_mw", "hydro_mw", "nuclear_mw", "solar_mw",
+        "appliance_signal", "computed_at",
+    )
+    tuples = [tuple(r[c] for c in _COLS) for r in rows]
 
     upsert_sql = """
         INSERT INTO features_hourly (
@@ -244,15 +254,7 @@ def _upsert_features_hourly(rows: list[dict], conn) -> int:
             greenness_score, low_carbon_mw, total_gen_mw,
             wind_mw, hydro_mw, nuclear_mw, solar_mw,
             appliance_signal, computed_at
-        )
-        SELECT
-            hour, zone, price_eur_mwh,
-            rolling_avg_6h, rolling_avg_24h, price_level,
-            temperature_c, windspeed_ms, radiation_wm2,
-            greenness_score, low_carbon_mw, total_gen_mw,
-            wind_mw, hydro_mw, nuclear_mw, solar_mw,
-            appliance_signal, computed_at
-        FROM _tmp_features_hourly
+        ) VALUES %s
         ON CONFLICT (hour, zone) DO UPDATE SET
             price_eur_mwh    = EXCLUDED.price_eur_mwh,
             rolling_avg_6h   = EXCLUDED.rolling_avg_6h,
@@ -272,7 +274,7 @@ def _upsert_features_hourly(rows: list[dict], conn) -> int:
             computed_at      = EXCLUDED.computed_at
     """
     with conn.cursor() as cur:
-        cur.execute(upsert_sql)
+        execute_values(cur, upsert_sql, tuples)
     conn.commit()
     return len(rows)
 

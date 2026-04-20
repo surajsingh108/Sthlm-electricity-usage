@@ -32,19 +32,22 @@ _TEMPLATE = "plotly_white"
 # 1. Price history line chart
 # ---------------------------------------------------------------------------
 
-def price_history_chart(df: pd.DataFrame, zone: str) -> go.Figure:
+def price_history_chart(
+    df: pd.DataFrame,
+    zone: str,
+    price_unit: str = "EUR/MWh",
+) -> go.Figure:
     """
-    Line chart showing price_eur_mwh, rolling_avg_6h, and rolling_avg_24h.
-
-    A semi-transparent band marks the ±15 % low/high threshold around the
-    most recent rolling_avg_24h value.
+    Lines+markers chart of the raw hourly spot price for a zone.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Columns: hour, price_eur_mwh, rolling_avg_6h, rolling_avg_24h.
+        Columns: hour, price_eur_mwh. Price must already be in target unit.
     zone : str
         Used for the price line colour and chart title.
+    price_unit : str
+        Y-axis label, e.g. "EUR/MWh" or "öre/kWh".
 
     Returns
     -------
@@ -58,42 +61,18 @@ def price_history_chart(df: pd.DataFrame, zone: str) -> go.Figure:
 
     zone_colour = _ZONE_COLOUR.get(zone, "#636efa")
 
-    # ±15 % band around the most recent 24h average
-    if df["rolling_avg_24h"].notna().any():
-        last_avg24 = float(df["rolling_avg_24h"].dropna().iloc[-1])
-        low_band = last_avg24 * 0.85
-        high_band = last_avg24 * 1.15
-
-        fig.add_trace(go.Scatter(
-            x=list(df["hour"]) + list(df["hour"])[::-1],
-            y=[high_band] * len(df) + [low_band] * len(df),
-            fill="toself",
-            fillcolor="rgba(200,200,200,0.25)",
-            line=dict(color="rgba(0,0,0,0)"),
-            name="±15% band",
-            hoverinfo="skip",
-        ))
-
-    fig.add_trace(go.Scatter(
-        x=df["hour"], y=df["rolling_avg_24h"],
-        mode="lines", name="24h avg",
-        line=dict(color="gray", width=1.5, dash="dot"),
-    ))
-    fig.add_trace(go.Scatter(
-        x=df["hour"], y=df["rolling_avg_6h"],
-        mode="lines", name="6h avg",
-        line=dict(color="darkgray", width=1.5, dash="dash"),
-    ))
     fig.add_trace(go.Scatter(
         x=df["hour"], y=df["price_eur_mwh"],
-        mode="lines", name=f"Price ({zone})",
-        line=dict(color=zone_colour, width=2),
+        mode="lines+markers",
+        name=f"Price ({zone})",
+        line=dict(color=zone_colour, width=1.5),
+        marker=dict(size=4, color=zone_colour),
     ))
 
     fig.update_layout(
         title=f"Spot price history — {zone}",
         xaxis_title="Hour (UTC)",
-        yaxis_title="EUR / MWh",
+        yaxis_title=price_unit,
         template=_TEMPLATE,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=60, b=40),
@@ -105,21 +84,33 @@ def price_history_chart(df: pd.DataFrame, zone: str) -> go.Figure:
 # 2. Greenness gauge
 # ---------------------------------------------------------------------------
 
-def greenness_gauge(score: float) -> go.Figure:
+def greenness_gauge(score: float | None) -> go.Figure:
     """
     Indicator gauge showing the current grid greenness score (0–100).
 
     Colour bands: green 80–100, amber 50–80, red 0–50.
+    Renders a blank "No data" gauge when score is None.
 
     Parameters
     ----------
-    score : float
-        Current greenness_score value.
+    score : float | None
+        Current greenness_score value, or None when unavailable.
 
     Returns
     -------
     go.Figure
     """
+    if score is None:
+        fig = go.Figure(go.Indicator(
+            mode="number",
+            value=None,
+            title={"text": "Grid greenness (SE3)<br><sup>No data yet</sup>", "font": {"size": 16}},
+            number={"font": {"size": 28}},
+        ))
+        fig.update_layout(template=_TEMPLATE, margin=dict(t=60, b=20, l=30, r=30), height=260)
+        return fig
+
+    bar_colour = "#2ca02c" if score >= 80 else ("#ff7f0e" if score >= 50 else "#d62728")
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=score,
@@ -127,14 +118,14 @@ def greenness_gauge(score: float) -> go.Figure:
         number={"suffix": "%", "font": {"size": 28}},
         gauge={
             "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "darkgray"},
-            "bar": {"color": "#2ca02c" if score >= 80 else ("#ff7f0e" if score >= 50 else "#d62728")},
+            "bar": {"color": bar_colour},
             "bgcolor": "white",
             "borderwidth": 1,
             "bordercolor": "lightgray",
             "steps": [
                 {"range": [0, 50],  "color": "#ffe0e0"},
                 {"range": [50, 80], "color": "#fff3cd"},
-                {"range": [80, 100],"color": "#d4edda"},
+                {"range": [80, 100], "color": "#d4edda"},
             ],
             "threshold": {
                 "line": {"color": "black", "width": 2},
@@ -328,7 +319,10 @@ def correlation_heatmap(df: pd.DataFrame, zone: str) -> go.Figure:
 # 6. Zone price comparison
 # ---------------------------------------------------------------------------
 
-def zone_price_comparison(df: pd.DataFrame) -> go.Figure:
+def zone_price_comparison(
+    df: pd.DataFrame,
+    price_unit: str = "EUR/MWh",
+) -> go.Figure:
     """
     Horizontal bar chart comparing current prices across all four zones.
 
@@ -337,7 +331,9 @@ def zone_price_comparison(df: pd.DataFrame) -> go.Figure:
     Parameters
     ----------
     df : pd.DataFrame
-        Columns: zone, price_eur_mwh.
+        Columns: zone, price_eur_mwh. Price column must already be in target unit.
+    price_unit : str
+        X-axis label and hover suffix, e.g. "EUR/MWh" or "öre/kWh".
 
     Returns
     -------
@@ -362,12 +358,12 @@ def zone_price_comparison(df: pd.DataFrame) -> go.Figure:
         y=df["zone"],
         orientation="h",
         marker_color=colours,
-        hovertemplate="%{y}: %{x:.1f} EUR/MWh<extra></extra>",
+        hovertemplate=f"%{{y}}: %{{x:.1f}} {price_unit}<extra></extra>",
     ))
 
     fig.update_layout(
         title="Current price by zone",
-        xaxis_title="EUR / MWh",
+        xaxis_title=price_unit,
         yaxis_title=None,
         template=_TEMPLATE,
         showlegend=False,

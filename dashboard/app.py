@@ -20,6 +20,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dashboard import charts, queries
 
+# 1 EUR/MWh × EUR_TO_SEK × 0.1 = öre/kWh
+_EUR_TO_SEK: float = 11.5
+_PRICE_UNIT: str = "öre/kWh"
+
+
+def _eur_mwh_to_ore_kwh(v: float) -> float:
+    return v * _EUR_TO_SEK * 0.1
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -48,9 +57,10 @@ signal = queries.get_latest_signal(zone)
 col1, col2, col3, col4 = st.columns(4)
 
 _price = signal["price_eur_mwh"]
+_price_ore = _eur_mwh_to_ore_kwh(_price) if _price is not None else None
 col1.metric(
     "Current price",
-    f"{_price:.1f} EUR/MWh" if _price is not None else "—",
+    f"{_price_ore:.1f} öre/kWh" if _price_ore is not None else "—",
 )
 
 _level = (signal["price_level"] or "—").upper()
@@ -117,15 +127,19 @@ st.markdown(
 col_left, col_right = st.columns([2, 1])
 
 with col_left:
-    price_df = queries.get_price_history(zone, hours)
+    price_df = queries.get_price_history(zone, hours).copy()
+    if "price_eur_mwh" in price_df.columns:
+        price_df["price_eur_mwh"] = price_df["price_eur_mwh"].map(
+            lambda v: _eur_mwh_to_ore_kwh(v) if v is not None else None
+        )
     st.plotly_chart(
-        charts.price_history_chart(price_df, zone),
+        charts.price_history_chart(price_df, zone, price_unit=_PRICE_UNIT),
         use_container_width=True,
     )
 
 with col_right:
     st.plotly_chart(
-        charts.greenness_gauge(signal["greenness_score"] or 0),
+        charts.greenness_gauge(signal["greenness_score"]),
         use_container_width=True,
     )
 
@@ -142,9 +156,13 @@ with col_left:
     )
 
 with col_right:
-    zone_df = queries.get_price_by_zone_now()
+    zone_df = queries.get_price_by_zone_now().copy()
+    if "price_eur_mwh" in zone_df.columns:
+        zone_df["price_eur_mwh"] = zone_df["price_eur_mwh"].map(
+            lambda v: _eur_mwh_to_ore_kwh(v) if v is not None else None
+        )
     st.plotly_chart(
-        charts.zone_price_comparison(zone_df),
+        charts.zone_price_comparison(zone_df, price_unit=_PRICE_UNIT),
         use_container_width=True,
     )
 
